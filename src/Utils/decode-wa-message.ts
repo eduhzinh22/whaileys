@@ -273,7 +273,7 @@ export const decodeMessageStanza = (
     : msgBuffer
 ) as proto.Message;
 
-            msg = msg.deviceSentMessage?.message || msg;
+            msg = (msg.deviceSentMessage?.message || msg) as proto.Message;
 
             if (msg.senderKeyDistributionMessage) {
               await processSenderKeyMessage(
