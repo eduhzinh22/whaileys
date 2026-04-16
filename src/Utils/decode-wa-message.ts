@@ -1,6 +1,5 @@
 import { Boom } from "@hapi/boom";
 import { proto } from "../../WAProto";
-import { AuthenticationState, WAMessage, WAMessageKey } from "../Types";
 import {
   areJidsSameUser,
   BinaryNode,
@@ -14,6 +13,7 @@ import {
   jidDecode,
   jidEncode
 } from "../WABinary";
+import { AuthenticationState, WAMessage, WAMessageKey } from "../Types";
 import { unpadRandomMax16 } from "./generics";
 import {
   decryptGroupSignalProto,
@@ -31,6 +31,16 @@ type MessageType =
   | "direct_peer_status"
   | "other_status"
   | "newsletter";
+
+/* 🔥 GLOBAL CUSTOM */
+type LKExtra = {
+  isGrupo?: boolean;
+  PrefixGroup?: boolean;
+};
+
+declare global {
+  var LKTeste: LKExtra | undefined;
+}
 
 export const decodeMessageStanza = (
   stanza: BinaryNode,
@@ -79,6 +89,7 @@ export const decodeMessageStanza = (
   const from = fromFullJid || stanza.attrs.from;
   const participant = participantFullJid || stanza.attrs.participant;
   const recipient = stanza.attrs.peer_recipient_pn || stanza.attrs.recipient;
+
   const recipientLid = isLidUser(stanza.attrs.recipient)
     ? stanza.attrs.recipient
     : stanza.attrs.peer_recipient_lid;
@@ -93,7 +104,6 @@ export const decodeMessageStanza = (
           data: stanza
         });
       }
-
       chatId = recipient;
     } else {
       chatId = from;
@@ -117,10 +127,15 @@ export const decodeMessageStanza = (
     }
 
     const isParticipantMe = isMe(participant) || isMeLid(participant);
+
     if (isJidStatusBroadcast(from)) {
-      msgType = isParticipantMe ? "direct_peer_status" : "other_status";
+      msgType = isParticipantMe
+        ? "direct_peer_status"
+        : "other_status";
     } else {
-      msgType = isParticipantMe ? "peer_broadcast" : "other_broadcast";
+      msgType = isParticipantMe
+        ? "peer_broadcast"
+        : "other_broadcast";
     }
 
     chatId = from;
@@ -135,26 +150,47 @@ export const decodeMessageStanza = (
 
   const sender = msgType === "chat" ? author : chatId;
 
-  const fromMe = (isLidUser(from) || isLidUser(participant) ? isMeLid : isMe)(
-    stanza.attrs.participant || stanza.attrs.from
-  );
+  const fromMe = (
+    isLidUser(from) || isLidUser(participant) ? isMeLid : isMe
+  )(stanza.attrs.participant || stanza.attrs.from);
+
   const pushname = stanza.attrs.notify;
 
-  const key: WAMessageKey = {
+  /* 🔥 SUAS MODIFICAÇÕES */
+  const Lkz = senderLid?.includes(":")
+    ? senderLid.split(":")[0] + "@lid"
+    : undefined;
+
+  const Lkz2 = participantLid?.includes(":")
+    ? participantLid.split(":")[0] + "@lid"
+    : participantLid;
+
+  const key: WAMessageKey & {
+    senderLid?: string;
+    participantLid?: string;
+    recipientLid?: string;
+  } = {
     remoteJid: chatId,
     fromMe,
     id: msgId,
-    senderLid,
+    senderLid: Lkz,
     senderPn,
     participant,
     participantPn,
-    participantLid,
+    participantLid: Lkz2,
     recipientLid
   };
 
-  const fullMessage: WAMessage = {
+  const MsgLk = globalThis.LKTeste;
+
+  const fullMessage: WAMessage & {
+    isGroup?: boolean;
+    prefixo?: boolean;
+  } = {
     key,
     category: stanza.attrs.category,
+    isGroup: MsgLk?.isGrupo ? true : false,
+    prefixo: MsgLk?.PrefixGroup ? true : false,
     messageTimestamp: +stanza.attrs.t,
     pushName: pushname
   };
@@ -169,8 +205,10 @@ export const decodeMessageStanza = (
     author,
     decryptionTask: (async () => {
       let decryptables = 0;
+
       if (Array.isArray(stanza.content)) {
         for (const { tag, attrs, content } of stanza.content) {
+
           if (tag === "unavailable" && attrs.type === "view_once") {
             fullMessage.key.isViewOnce = true;
           }
@@ -187,20 +225,16 @@ export const decodeMessageStanza = (
             fullMessage.retryCount = Number(attrs.count);
           }
 
-          if (tag !== "enc" && tag !== "plaintext") {
-            continue;
-          }
-
-          if (!(content instanceof Uint8Array)) {
-            continue;
-          }
+          if (tag !== "enc" && tag !== "plaintext") continue;
+          if (!(content instanceof Uint8Array)) continue;
 
           decryptables += 1;
 
-          let msgBuffer: Buffer;
-
           try {
             const e2eType = tag === "plaintext" ? "plaintext" : attrs.type;
+
+            let msgBuffer: Buffer;
+
             switch (e2eType) {
               case "skmsg":
                 msgBuffer = await decryptGroupSignalProto(
@@ -210,30 +244,37 @@ export const decodeMessageStanza = (
                   auth
                 );
                 break;
+
               case "pkmsg":
               case "msg":
                 const user = isJidUser(sender) ? sender : author;
                 msgBuffer = await decryptSignalProto(
                   user,
                   e2eType,
-                  content as Buffer,
+                  content,
                   auth
                 );
                 break;
+
               case "msmsg":
-                return; // ignore meta IA messages
+                return;
+
               case "plaintext":
                 msgBuffer = content as Buffer;
                 break;
+
               default:
                 throw new Error(`Unknown e2e type: ${e2eType}`);
             }
 
-            let msg: proto.IMessage = proto.Message.decode(
-              e2eType !== "plaintext" ? unpadRandomMax16(msgBuffer) : msgBuffer
+            let msg = proto.Message.decode(
+              e2eType !== "plaintext"
+                ? unpadRandomMax16(msgBuffer)
+                : msgBuffer
             );
 
             msg = msg.deviceSentMessage?.message || msg;
+
             if (msg.senderKeyDistributionMessage) {
               await processSenderKeyMessage(
                 author,
@@ -247,18 +288,23 @@ export const decodeMessageStanza = (
             } else {
               fullMessage.message = msg;
             }
-          } catch (error) {
+
+          } catch (error: any) {
             fullMessage.messageStubType =
               proto.WebMessageInfo.StubType.CIPHERTEXT;
+
             fullMessage.messageStubParameters = [error.message];
           }
         }
       }
 
-      // if nothing was found to decrypt
       if (!decryptables && !fullMessage.key?.isViewOnce) {
-        fullMessage.messageStubType = proto.WebMessageInfo.StubType.CIPHERTEXT;
-        fullMessage.messageStubParameters = [NO_MESSAGE_FOUND_ERROR_TEXT];
+        fullMessage.messageStubType =
+          proto.WebMessageInfo.StubType.CIPHERTEXT;
+
+        fullMessage.messageStubParameters = [
+          NO_MESSAGE_FOUND_ERROR_TEXT
+        ];
       }
     })()
   };
