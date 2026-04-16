@@ -268,10 +268,10 @@ export const decodeMessageStanza = (
             }
 
             let msg = proto.Message.decode(
-              e2eType !== "plaintext"
-                ? unpadRandomMax16(msgBuffer)
-                : msgBuffer
-            );
+  e2eType !== "plaintext"
+    ? unpadRandomMax16(msgBuffer)
+    : msgBuffer
+) as proto.Message;
 
             msg = msg.deviceSentMessage?.message || msg;
 
