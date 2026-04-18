@@ -47,7 +47,7 @@ import {
 import { makeSocket } from "./socket";
 
 const MAX_SYNC_ATTEMPTS = 5;
-
+/*makeWASocket*/
 export const makeChatsSocket = (config: SocketConfig) => {
   const {
     logger,
